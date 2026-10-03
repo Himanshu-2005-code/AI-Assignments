@@ -24,6 +24,7 @@ def _res(name, inst, plan, evals, t0):
 # Online policy: no knowledge of future arrivals
 # --------------------------------------------------------------------------
 def online_policy(inst: Instance, max_wait: float = 2.0, respect_order: bool = True,
+                  truck_wait: float = 0.0, block_ok: bool = False,
                   name: Optional[str] = None) -> SearchResult:
     """Event-driven rule a dispatcher could actually run.
 
@@ -33,8 +34,11 @@ def online_policy(inst: Instance, max_wait: float = 2.0, respect_order: bool = T
       dest_new <= destination of the package currently at the door. Among
       those, the tightest fit (smallest door destination) is chosen - this is
       patience sorting, which uses the minimum number of LIFO-consistent stacks.
-    * Otherwise it opens a trip on an idle truck, or on a new truck (if the
-      fleet allows), else on the truck returning first (package waits).
+    * Otherwise, if ``block_ok``, it joins any open trip with room (accepting
+      a rehandle rather than a new truck).
+    * Otherwise it opens a trip on an idle truck; else on the truck returning
+      first if that is at most ``truck_wait`` away; else on a new truck (if the
+      fleet allows); else on the truck returning first anyway.
     """
     t0 = time.perf_counter()
     p = inst.params
@@ -62,13 +66,21 @@ def online_policy(inst: Instance, max_wait: float = 2.0, respect_order: bool = T
             door = pk[ids[-1]].dest
             if len(ids) < p.capacity and (not respect_order or p.free_order or pkg.dest <= door):
                 cands.append((door, k))
+        roomy = [k for k, (ids, _) in open_.items() if len(ids) < p.capacity]
+        idle = [k for k in range(len(free)) if k not in open_ and free[k] <= a]
+        away = [k for k in range(len(free)) if k not in open_ and free[k] > a]
+        soon = min(away, key=lambda k: free[k]) if away else None
         if cands:
             _, k = min(cands)
             open_[k][0].append(pkg.id)
+        elif block_ok and roomy and not idle:
+            k = min(roomy, key=lambda k: len(open_[k][0]))
+            open_[k][0].append(pkg.id)
         else:
-            idle = [k for k in range(len(free)) if k not in open_ and free[k] <= a]
             if idle:
                 k = idle[0]
+            elif soon is not None and free[soon] - a <= truck_wait:
+                k = soon
             elif p.max_trucks is None or len(free) < p.max_trucks:
                 free.append(0.0)
                 k = len(free) - 1
@@ -93,11 +105,13 @@ def immediate_dispatch(inst: Instance) -> SearchResult:
     return online_policy(inst, max_wait=0.0, name="Immediate")
 
 
-def best_online(inst: Instance, waits: Sequence[float] = (0, 0.5, 1, 2, 3, 5, 8)) -> SearchResult:
-    """Online policy with the timeout tuned per instance (an upper bound on
-    what a tuned rule could do)."""
+def best_online(inst: Instance, waits: Sequence[float] = (0, 0.5, 1, 2, 3, 5),
+                truck_waits: Sequence[float] = (0, 2, 4, 8, 1e9)) -> SearchResult:
+    """Online policy with its knobs tuned per instance (an optimistic bound on
+    what a tuned rule could do - in practice the knobs are tuned on history)."""
     t0 = time.perf_counter()
-    best = min((online_policy(inst, w) for w in waits), key=lambda r: r.cost)
+    best = min((online_policy(inst, w, truck_wait=tw, block_ok=b)
+                for w in waits for tw in truck_waits for b in (False, True)), key=lambda r: r.cost)
     best.algorithm = "Online(tuned)"
     best.seconds = time.perf_counter() - t0
     return best
