@@ -154,6 +154,9 @@ def _variant_job(args):
     elif kind == "online":
         inst = generate(n, seed=seed)
         r = online_policy(inst, **kw)
+    elif kind == "online_tuned":
+        inst = generate(n, seed=seed)
+        r = best_online(inst)
     if r.plan is None:
         return name, None
     e = evaluate(inst, r.plan)
@@ -173,9 +176,11 @@ def exp_variants(pool, n, seeds):
         ("Busier centre (rate 4/tau)", "gen", {"rate": 4.0}),
         ("Quieter centre (rate 1/tau)", "gen", {"rate": 1.0}),
         ("Skewed destinations (near-heavy)", "gen", {"dest_weights": [4, 3, 2, 1]}),
-        ("Online rule, wait 1 (no lookahead)", "online", {"max_wait": 1.0}),
-        ("Online rule, wait 3 (no lookahead)", "online", {"max_wait": 3.0}),
-        ("Online rule ignoring LIFO order", "online", {"max_wait": 3.0, "respect_order": False}),
+        ("Online naive rule: timeout 2, new truck if none idle", "online", {"max_wait": 2.0}),
+        ("Online rule: timeout 2, wait <= 4 for a returning truck", "online", {"max_wait": 2.0, "truck_wait": 4.0}),
+        ("Online rule as above but ignoring LIFO order", "online",
+         {"max_wait": 2.0, "truck_wait": 4.0, "respect_order": False}),
+        ("Online rule, knobs tuned per instance", "online_tuned", {}),
     ]
     res = pool.map(_variant_job, [(nm, n, s, k, kw) for nm, k, kw in variants for s in range(seeds)])
     tab = []
