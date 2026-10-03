@@ -1,5 +1,7 @@
 # Assignment 1 — Truck Loading and Delivery Planning (CSE643)
 
+> **Revising for the in-class assessment? Start with the one-page [LEARNINGS.md](LEARNINGS.md).**
+
 Plan how arriving packages are loaded into trucks so as to minimise
 
 ```
