@@ -10,24 +10,34 @@ from truckload import (Params, Trip, TruckLoadingProblem, astar, decode, evaluat
 from truckload.problem import simulate_trip
 
 
-def test_rehandling_counts_blockers():
-    inst = from_lists([0, 1, 2], [1, 3, 2], Params(rehandle=1.0))
-    # load order 1,3,2 -> door holds dest 2, then 3, deepest dest 1
-    delivered, ret, rh = simulate_trip(inst, (0, 1, 2), 0.0)
-    assert rh == 2                       # at stop 1 both others block
-    assert delivered[0] == 1 + 2         # drive 1 + 2 rehandles
-    assert delivered[2] == 4             # stop 2: no blocker (dest 3 is deeper)
-    assert ret == 3 + 2 + 3              # drive out 3 + rehandles 2 + back 3
+def test_valid_order_delivers_nearest_stop_first():
+    # Loaded deepest-to-door as 3,2,1 (non-increasing) - a valid trip. The
+    # truck should unload dest 1 first, then 2, then 3, with no shuffling.
+    inst = from_lists([0, 0, 0], [3, 2, 1])
+    delivered, ret = simulate_trip(inst, (0, 1, 2), 0.0)
+    assert delivered[2] == 1   # dest 1, reached first
+    assert delivered[1] == 2   # dest 2
+    assert delivered[0] == 3   # dest 3
+    assert ret == 6            # drive out 3 + back 3, no extra cost anywhere
 
 
-def test_free_order_removes_rehandling():
-    inst = from_lists([0, 1, 2], [1, 3, 2], Params(free_order=True))
-    _, _, rh = simulate_trip(inst, (0, 1, 2), 0.0)
-    assert rh == 0
+def test_out_of_order_trip_is_rejected():
+    # Loaded 1 then 3: the package for the farther stop (3) ends up behind
+    # the one for the nearer stop (1), so it can't come out first. The
+    # assignment's "respect the ordering" rule makes this plan invalid
+    # outright, not merely penalised.
+    inst = from_lists([0, 1], [1, 3])
+    try:
+        evaluate(inst, [Trip(0, (0, 1))])
+        assert False, "expected a ValueError for an out-of-order trip"
+    except ValueError:
+        pass
 
 
 def brute_force(inst):
-    """Enumerate every (truck, break) encoding - the space the search explores."""
+    """Enumerate every (truck, break) encoding - the space the search explores.
+    An encoding that decodes into an out-of-order trip is invalid and skipped,
+    exactly like the tree search never offering that APPEND action."""
     n = inst.n
     best = float("inf")
     for truck in itertools.product(range(n), repeat=n):
@@ -42,7 +52,10 @@ def brute_force(inst):
         if not ok:
             continue
         for brk in itertools.product((0, 1), repeat=n):
-            best = min(best, evaluate(inst, decode(inst, truck, brk)).cost)
+            try:
+                best = min(best, evaluate(inst, decode(inst, truck, brk)).cost)
+            except ValueError:
+                continue
     return best
 
 

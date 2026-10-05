@@ -77,7 +77,7 @@ class TruckLoadingProblem:
         # suffix sums for the "remaining packages" part of the heuristics
         self.rem = [0.0] * (self.n + 1)
         for j in range(self.n - 1, -1, -1):
-            self.rem[j] = self.rem[j + 1] + self.dest[j] * self.p.tau + self.p.unload
+            self.rem[j] = self.rem[j + 1] + self.dest[j] * self.p.tau
         self._open_cache: Dict[Tuple, float] = {}
 
     # -- state helpers ----------------------------------------------------
@@ -97,7 +97,7 @@ class TruckLoadingProblem:
 
     def dispatch(self, free, ids):
         depart = max(free, self.arr[ids[-1]])
-        s, ret, _ = trip_delay_sum(self.inst, ids, depart)
+        s, ret = trip_delay_sum(self.inst, ids, depart)
         return self.coef * s, ret
 
     def successors(self, node: Node) -> List[Node]:
@@ -124,7 +124,12 @@ class TruckLoadingProblem:
             out.append(Node(i + 1, new_trucks, False, node.g + step, node, closed, key))
 
         for k, (free, ids, tid) in enumerate(trucks):
-            if ids and len(ids) < self.p.capacity:  # APPEND k
+            # APPEND k: only if the trip still has room AND the new package doesn't
+            # need to come out before the one currently at the door - packages
+            # unload from the front, so a trip's load order must be non-increasing
+            # in destination. This is the hard rule the assignment asks for; there
+            # is no "load it anyway and pay a penalty" option.
+            if ids and len(ids) < self.p.capacity and self.dest[i] <= self.dest[ids[-1]]:
                 push(trucks[:k] + ((free, ids + (i,), tid),) + trucks[k + 1:], 0.0, [])
             if ids:  # NEW k (dispatch the open trip first)
                 c, ret = self.dispatch(free, ids)

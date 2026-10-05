@@ -8,7 +8,11 @@ much does search buy us?").
 Representation: truck[i] (truck id of package i) and brk[i] (package i
 starts a new trip on its truck). Packages of a truck, in arrival order, are
 cut into trips at brk flags and whenever a trip is full. This is exactly the
-space the tree search explores, so costs compare directly against A*/UCS.
+space the tree search explores, so costs compare directly against A*/UCS -
+including the hard rule that a trip can't load a farther package behind a
+nearer one. An encoding that breaks that rule is simply invalid: _cost()
+scores it as +inf, so it is rejected the same way the tree search never
+offers that action in the first place.
 """
 from __future__ import annotations
 
@@ -55,14 +59,28 @@ def encode(inst: Instance, plan: Sequence[Trip]) -> Tuple[List[int], List[int]]:
 
 
 def _cost(inst, truck, brk):
-    return evaluate(inst, decode(inst, truck, brk)).cost
+    """Cost of a (truck, brk) encoding, or +inf if it decodes into a trip that
+    loads a farther package behind a nearer one - that violates the hard
+    ordering rule, so it is simply not a reachable plan, the same way the
+    tree search never offers that APPEND action. Treating it as infinitely
+    bad lets simulated annealing and the genetic algorithm reject it through
+    their ordinary accept/select logic, with no separate validity check."""
+    try:
+        return evaluate(inst, decode(inst, truck, brk)).cost
+    except ValueError:
+        return float("inf")
 
 
 def _random_individual(inst, rng):
-    k = rng.randint(1, max(1, inst.n // 2))
-    truck = [rng.randrange(k) for _ in range(inst.n)]
-    brk = [int(rng.random() < 0.3) for _ in range(inst.n)]
-    return truck, brk
+    for _ in range(20):
+        k = rng.randint(1, max(1, inst.n // 2))
+        truck = [rng.randrange(k) for _ in range(inst.n)]
+        brk = [int(rng.random() < 0.3) for _ in range(inst.n)]
+        if _cost(inst, truck, brk) < float("inf"):
+            return truck, brk
+    # Fallback, always valid: one truck per package, so no trip ever has two
+    # packages to be ordered at all.
+    return list(range(inst.n)), [1] * inst.n
 
 
 # --------------------------------------------------------------------------
@@ -77,7 +95,7 @@ def simulated_annealing(inst: Instance, iters: int = 20000, t_start: float = 2.0
     if start is not None:
         truck, brk = encode(inst, start)
     else:
-        truck, brk = [0] * inst.n, [0] * inst.n
+        truck, brk = _random_individual(inst, rng)
     cur = _cost(inst, truck, brk)
     best = (cur, truck, brk)
     alpha = (t_end / t_start) ** (1.0 / iters)

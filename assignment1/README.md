@@ -43,16 +43,17 @@ python run_experiments.py [--quick]       # regenerates results/
 | Arrivals | Known in advance (offline, e.g. the day's manifest), Poisson with 2 packages per τ in the experiments. | Gives a well-defined search problem. The online case is studied separately in §5. |
 | Trucks | Identical, capacity `C` (default 4), all at the depot at the start of the day. The number of trucks is a decision variable. | Given in the problem statement. |
 | Loading | **Load-on-arrival:** a truck is loaded in the order its packages arrive (no space to re-sort on the floor). The truck is a **stack**: the last package loaded sits at the door. | This makes "respect the destination ordering as far as possible" a real constraint rather than a free sort. |
-| Ordering violations | Allowed but costly. At each stop, every package in front of the deepest package for that stop is taken out and put back, costing `rehandle` time (0.5τ) each and delaying everyone after it. | A soft constraint is more realistic than forbidding violations outright, and the optimiser can trade it against waiting or extra trucks. |
+| Ordering | A **hard rule**, taken directly from the problem statement: a package may only be added to a trip if its destination is at or before whatever's currently at the door. If it isn't, that trip simply can't take it — the plan must open a new trip or a new truck instead. | The assignment says packages "should not be loaded in front of" one for an earlier stop. We enforce that literally, as a constraint on which moves exist, rather than inventing a penalty for breaking it. |
 | Departure | A trip leaves at `max(truck back at depot, last package of the trip has arrived)`. | Leaving later never helps: delays would only grow and the truck would come back later. |
 | Objective | `w_truck = 3`, `w_delay = 1` (one truck is worth 3τ of average delay). | Trades trucks against delay; swept in §5. |
 
 **The key structural fact:** the packages a truck takes on one trip form a subsequence of the
-arrival sequence, and that trip needs no rehandling exactly when the subsequence is
-non-increasing in destination. Using several trucks at once therefore works like **patience
-sorting**: the fewest LIFO-consistent "stacks" equals the length of the longest strictly
-increasing subsequence of destinations. This gives intuition, not the objective: waiting and
-trip timing matter too.
+arrival sequence, and the ordering rule forces that subsequence to be non-increasing in
+destination. Using several trucks at once therefore works like **patience sorting**: the fewest
+LIFO-consistent "stacks" equals the length of the longest strictly increasing subsequence of
+destinations. This gives intuition, not the objective: waiting and trip timing matter too. One
+side effect of making the rule hard rather than soft: there's nothing left to simulate at a stop
+beyond "unload whoever is at the door" — no rehandling, no extra parameter, no extra cost term.
 
 ## 2. State-space formulation
 
@@ -61,7 +62,9 @@ trip timing matter too.
   trip and `open_trip` is the tuple of packages loaded so far on the trip at the dock.
 * **Initial state:** `(0, ())`, with no trucks assigned yet.
 * **Actions** for package `i`:
-  * `APPEND k`: put the package on truck k's open trip, if it is not full.
+  * `APPEND k`: put the package on truck k's open trip — only if the trip isn't full **and**
+    package `i`'s destination is at or before the destination of whoever is already at the
+    door. Otherwise this action simply doesn't exist for truck k.
   * `NEW k`: dispatch truck k's open trip, then start a new trip on k with package `i`.
   * `TRUCK`: assign one more truck to the centre and start a trip with package `i`.
   * When `i = n`, a single `FINISH` action dispatches every open trip.
@@ -82,7 +85,7 @@ trip timing matter too.
 |---|---|---|
 | `h0` | 0 (gives UCS) | yes |
 | `h_rem` | `w_delay/n × Σ_{unplaced} d·τ` (every package still needs its pure driving time) | yes |
-| `h_open` | `h_rem` + the delay of every open trip **if it left right now** | yes, because adding packages to a trip can only make its existing packages later (dispatch moves later, plus extra unloading or rehandling). Verified empirically against UCS and brute force. |
+| `h_open` | `h_rem` + the delay of every open trip **if it left right now** | yes, because adding packages to a trip can only make its existing packages later (the trip's dispatch only moves later from here). Verified empirically against UCS and brute force. |
 
 None of them bounds the **truck** term, since one truck could in principle serve everything by
 waiting. This blind spot explains why greedy best-first and narrow beams fail (§4).
@@ -117,41 +120,47 @@ bigger sample (more seeds, larger n) than the `--quick` numbers quoted here.
 
 | n | UCS | A*(h_rem) | A*(h_open) |
 |---|---|---|---|
-| 4 | 36 | 27 | 6 |
-| 6 | 458 | 191 | 18 |
-| 8 | 6,476 | 1,994 | 60 |
+| 4 | 24 | 18 | 6 |
+| 6 | 207 | 97 | 15 |
+| 8 | 2,191 | 885 | 55 |
 
 ![nodes](results/heuristics_nodes.png)
 
-**Quality vs effort**, mean gap % and mean nodes expanded:
+**Quality vs effort**, gap % and nodes expanded (mean over 4 random instances per size):
 
 | algorithm | n=8 | n=12 | n=16 |
 |---|---|---|---|
-| BFS / DFS | 22.0% | — | — |
-| UCS | 0%, 8.8k nodes | — | — |
-| A*(h_open) | 0%, 77 | 0%, 1.1k | 0%, 17k |
-| Greedy best-first | 118% | 132% | 116% |
-| Beam k=25 | 0.1% | 0.2% | 4.2% |
-| **Simulated annealing** | 1.0% | 4.7% | 2.2% |
-| **Genetic algorithm (pop=40, gen=200)** | 0.4% | 4.2% | 9.4% |
+| BFS / DFS | 21.2% | — | — |
+| UCS | 0.0%, 3.6k nodes | — | — |
+| A*(h_open) | 0.0%, 74 | 0.0%, 527 | 0.0%, 3.2k |
+| Greedy best-first | 106.5% | 125.9% | 115.2% |
+| Beam k=25 | 0.0% | 0.0% | 0.9% |
+| **Simulated annealing** | 0.0% | 0.4% | 1.3% |
+| **Genetic algorithm (pop=40, gen=200)** | 0.0% | 1.9% | 20.0% |
 
-The genetic algorithm tracks simulated annealing closely at small n and both degrade gently as n
-grows, since neither does systematic search — they're the two "when A* gets too big" fallbacks.
+Simulated annealing degrades gently as n grows. The genetic algorithm matches it at n=8–12 but
+falls off sharply at n=16 in this (small, 4-instance) sample — with a fixed population and
+generation budget it simply doesn't get enough evolutionary steps per package as the problem
+grows; a bigger run (`run_experiments.py` without `--quick`) would want a larger population to
+match SA's trajectory-based search at that size.
 
 **Model variations** (n = 8, mean over instances):
 
 | variation | cost | trucks | avg delay | what it shows |
 |---|---|---|---|---|
-| base model (A*, optimal) | 8.97 | 1.50 | 4.47 | — |
-| staging area (free load order) | 8.69 | 1.50 | 4.19 | the LIFO constraint costs little when planned well |
-| rehandling 2τ instead of 0.5τ | 9.36 | 1.75 | 4.11 | the optimiser avoids violations and uses more trips instead |
-| capacity 2 / 6 | 10.70 / 8.65 | 2.00 / 1.25 | 4.70 / 4.90 | small trucks hurt; large ones help less than you'd expect |
-| fixed fleet of 1 truck | 9.57 | 1.00 | 6.57 | the second truck is worth a few τ of average delay |
-| genetic algorithm (pop=40, gen=200) | 9.01 | 1.50 | 4.51 | within about 0.4% of the A* optimum at this size |
+| base model (A*, optimal) | 9.42 | 1.75 | 4.17 | — |
+| bigger trucks (capacity 6) | 9.33 | 1.75 | 4.08 | more room per trip helps only a little |
+| smaller trucks (capacity 2) | 10.70 | 2.00 | 4.70 | small trucks force more trips and more trucks |
+| fixed fleet of 1 truck | 11.57 | 1.00 | 8.57 | the second truck is worth several τ of average delay |
+| busier centre (rate 4/τ) | 9.50 | 1.75 | 4.25 | more packages per trip, barely moves the cost |
+| quieter centre (rate 1/τ) | 9.02 | 1.50 | 4.52 | fewer packages waiting lets one truck keep up |
+| skewed destinations (near-heavy) | 8.72 | 2.00 | 2.72 | short trips are cheap, so the optimiser uses more of them |
+| genetic algorithm (pop=40, gen=200) | 9.42 | 1.75 | 4.17 | matches the A* optimum exactly at this size |
+| genetic algorithm, smaller population (pop=10) | 9.97 | 2.00 | 3.97 | a narrower population finds a worse (but still valid) plan |
 
 **Weight sweep:** raising `w_truck` traces the Pareto front — more trucks and less delay at low
-weight, fewer trucks and more delay at high weight, with the optimiser settling on one truck once
-the weight is high enough.
+weight, fewer trucks and more delay at high weight, settling on one truck once the weight is high
+enough (`w_truck=12` → 1.00 truck, 8.57 avg delay, matching the fixed-fleet-of-1 row above).
 
 ![tradeoff](results/weight_tradeoff.png)
 
@@ -169,7 +178,8 @@ the weight is high enough.
 
 The recommendation relies on these assumptions: arrival times are known for the planning
 window, trucks are identical, stops are equidistant on one highway, loading happens on arrival
-(LIFO), and a violation is a fixed time cost.
+(LIFO), and the destination-ordering rule is enforced structurally (a trip simply can't accept
+an out-of-order package, rather than being allowed to and paying for it).
 
 ## 6. Learnings to remember
 
@@ -178,8 +188,9 @@ window, trucks are identical, stops are equidistant on one highway, loading happ
 2. **LIFO ordering becomes patience sorting.** Each trip should be a non-increasing
    subsequence of destinations. Parallel trucks act as extra stacks, and the longest
    increasing subsequence is the minimum number of stacks needed.
-3. **The trade-off is trucks vs waiting vs rehandling.** Each lever substitutes for the others,
-   and the weights decide which one wins.
+3. **The trade-off is trucks vs waiting.** Taking on another truck costs `w_truck`; waiting for
+   a fuller or better-ordered trip costs delay instead. The weights decide which one wins — the
+   ordering rule itself isn't part of the trade-off, since it's a hard constraint, not a cost.
 4. **A heuristic's strength decides scalability.** `h_open` uses the open trips' committed
    delay; it cuts A*'s nodes by two to three orders of magnitude versus UCS at the same n.
 5. **Uninformed search is useless here.** All goals sit at the same depth, so BFS must enumerate
@@ -195,14 +206,16 @@ window, trucks are identical, stops are equidistant on one highway, loading happ
    single trajectory.** With pop=40, gen=200 it is competitive at small n; a much smaller
    population (e.g. 10) gives noticeably worse plans for the same reason a too-narrow beam does —
    not enough diversity to escape a bad crossover.
-9. **Let rehandling be priced.** With cheap rehandling the optimum accepts some violations;
-   with expensive rehandling it re-routes packages instead. A staging area gains only a little
-   over smart load-on-arrival.
+9. **Making the ordering rule hard, not priced, keeps the model small.** Forbidding an
+   out-of-order `APPEND` outright (instead of allowing it for a fee) removes a parameter, a
+   cost term, and an entire family of "how expensive is a violation" experiments — and it's a
+   closer reading of the assignment, which says packages should simply be loaded in that order,
+   not that they may be loaded otherwise for a price.
 
-## 7. Further variations (discussed; partly supported by flags in `Params`)
+## 7. Further variations (discussed; not all implemented in `Params`)
 
-* **Supported in the code:** a fixed fleet (`max_trucks`), a staging area (`free_order`),
-  unload and rehandle times, capacity, destination skew, and arrival rate.
+* **Supported in the code:** a fixed fleet (`max_trucks`), capacity, destination skew, and
+  arrival rate.
 * **Heterogeneous trucks** (different capacity or cost): add a truck type to the truck state,
   and give the `TRUCK` action one branch per type.
 * **Non-equidistant or branching routes:** replace `d·τ` by a route length from a TSP or
@@ -210,8 +223,10 @@ window, trucks are identical, stops are equidistant on one highway, loading happ
   direct distance.
 * **Deadlines or priorities:** use a weighted delay or a hard constraint. Pruning with
   deadline violations keeps A* complete.
-* **Staging area of limited size `B`:** add the floor buffer to the state; actions become
-  "load from buffer" or "park on floor". This interpolates between load-on-arrival and free
-  order.
+* **A small staging area at the dock:** if a few packages could wait on the floor instead of
+  going straight onto a trip, the hard ordering rule could sometimes be satisfied by holding a
+  package back rather than opening a new trip for it. Not implemented here, since the
+  assignment describes load-on-arrival rather than a buffer — but it would only need the floor
+  buffer added to the state and a couple of new actions ("load from buffer" / "park on floor").
 * **Uncertain arrivals:** use a rolling horizon, or an MDP / expectimax over arrival
   scenarios.
