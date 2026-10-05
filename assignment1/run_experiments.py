@@ -12,9 +12,8 @@ import statistics as st
 from dataclasses import replace
 from multiprocessing import Pool
 
-from truckload import (Params, TruckLoadingProblem, astar, beam_search, best_online, bfs, dfbnb,
-                       dfs, evaluate, generate, greedy, hill_climbing, ida_star, immediate_dispatch,
-                       online_policy, simulated_annealing, ucs, weighted_astar)
+from truckload import (Params, TruckLoadingProblem, astar, beam_search, bfs, dfs, evaluate,
+                       generate, genetic_algorithm, greedy, simulated_annealing, ucs)
 
 OUT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "results")
 LIMIT = 200_000  # node limit for the exhaustive / tree searches
@@ -23,16 +22,11 @@ LIMIT = 200_000  # node limit for the exhaustive / tree searches
 def algorithms(small: bool):
     algs = {
         "A*(h_open)": lambda P, I: astar(P, "h_open", node_limit=LIMIT),
-        "DFBnB(h_open)": lambda P, I: dfbnb(P, "h_open", node_limit=LIMIT),
-        "WA*(w=1.5)": lambda P, I: weighted_astar(P, 1.5, node_limit=LIMIT),
-        "WA*(w=3)": lambda P, I: weighted_astar(P, 3.0, node_limit=LIMIT),
         "Greedy-BeFS": lambda P, I: greedy(P, node_limit=LIMIT),
         "Beam(k=5)": lambda P, I: beam_search(P, 5),
         "Beam(k=25)": lambda P, I: beam_search(P, 25),
-        "HillClimb(r=5)": lambda P, I: hill_climbing(I, 5),
         "SA(20k)": lambda P, I: simulated_annealing(I, 20000),
-        "Online(tuned)": lambda P, I: best_online(I),
-        "Immediate": lambda P, I: immediate_dispatch(I),
+        "GA(pop=40,gen=200)": lambda P, I: genetic_algorithm(I, 40, 200),
     }
     if small:
         algs.update({
@@ -40,14 +34,12 @@ def algorithms(small: bool):
             "DFS": lambda P, I: dfs(P, node_limit=LIMIT),
             "UCS": lambda P, I: ucs(P, node_limit=LIMIT),
             "A*(h_rem)": lambda P, I: astar(P, "h_rem", node_limit=LIMIT),
-            "IDA*(h_open)": lambda P, I: ida_star(P, "h_open", node_limit=LIMIT),
         })
     return algs
 
 
-ORDER = ["BFS", "DFS", "UCS", "A*(h_rem)", "A*(h_open)", "IDA*(h_open)", "DFBnB(h_open)",
-         "WA*(w=1.5)", "WA*(w=3)", "Greedy-BeFS", "Beam(k=5)", "Beam(k=25)", "HillClimb(r=5)",
-         "SA(20k)", "Online(tuned)", "Immediate"]
+ORDER = ["BFS", "DFS", "UCS", "A*(h_rem)", "A*(h_open)", "Greedy-BeFS", "Beam(k=5)",
+         "Beam(k=25)", "SA(20k)", "GA(pop=40,gen=200)"]
 
 
 def run_one(args):
@@ -119,8 +111,7 @@ def _heur_job(args):
     out = {}
     for name, f in [("UCS", lambda P: ucs(P, node_limit=LIMIT)),
                     ("A*(h_rem)", lambda P: astar(P, "h_rem", node_limit=LIMIT)),
-                    ("A*(h_open)", lambda P: astar(P, "h_open", node_limit=LIMIT)),
-                    ("DFBnB(h_open)", lambda P: dfbnb(P, "h_open", node_limit=LIMIT))]:
+                    ("A*(h_open)", lambda P: astar(P, "h_open", node_limit=LIMIT))]:
         r = f(TruckLoadingProblem(inst))
         out[name] = r.expanded if r.status == "ok" else None
     return n, out
@@ -128,7 +119,7 @@ def _heur_job(args):
 
 def exp_heuristics(pool, sizes, seeds):
     res = pool.map(_heur_job, [(n, s) for n in sizes for s in range(seeds)])
-    names = ["UCS", "A*(h_rem)", "A*(h_open)", "DFBnB(h_open)"]
+    names = ["UCS", "A*(h_rem)", "A*(h_open)"]
     tab, series = [], {k: [] for k in names}
     for n in sizes:
         row = [n]
@@ -151,12 +142,9 @@ def _variant_job(args):
     elif kind == "gen":
         inst = generate(n, seed=seed, **kw)
         r = astar(TruckLoadingProblem(inst), node_limit=LIMIT)
-    elif kind == "online":
+    elif kind == "ga":
         inst = generate(n, seed=seed)
-        r = online_policy(inst, **kw)
-    elif kind == "online_tuned":
-        inst = generate(n, seed=seed)
-        r = best_online(inst)
+        r = genetic_algorithm(inst, **kw)
     if r.plan is None:
         return name, None
     e = evaluate(inst, r.plan)
@@ -176,11 +164,8 @@ def exp_variants(pool, n, seeds):
         ("Busier centre (rate 4/tau)", "gen", {"rate": 4.0}),
         ("Quieter centre (rate 1/tau)", "gen", {"rate": 1.0}),
         ("Skewed destinations (near-heavy)", "gen", {"dest_weights": [4, 3, 2, 1]}),
-        ("Online naive rule: timeout 2, new truck if none idle", "online", {"max_wait": 2.0}),
-        ("Online rule: timeout 2, wait <= 4 for a returning truck", "online", {"max_wait": 2.0, "truck_wait": 4.0}),
-        ("Online rule as above but ignoring LIFO order", "online",
-         {"max_wait": 2.0, "truck_wait": 4.0, "respect_order": False}),
-        ("Online rule, knobs tuned per instance", "online_tuned", {}),
+        ("Genetic Algorithm (pop=40, gen=200)", "ga", {"pop_size": 40, "generations": 200}),
+        ("Genetic Algorithm, smaller population (pop=10, gen=200)", "ga", {"pop_size": 10, "generations": 200}),
     ]
     res = pool.map(_variant_job, [(nm, n, s, k, kw) for nm, k, kw in variants for s in range(seeds)])
     tab = []

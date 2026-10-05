@@ -5,8 +5,8 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from truckload import (Params, Trip, TruckLoadingProblem, astar, decode, dfbnb, evaluate, from_lists,
-                       generate, ida_star, ucs)
+from truckload import (Params, Trip, TruckLoadingProblem, astar, decode, evaluate, from_lists,
+                       generate, genetic_algorithm, ucs)
 from truckload.problem import simulate_trip
 
 
@@ -50,7 +50,7 @@ def test_optimal_algorithms_agree_with_brute_force():
     for seed in range(6):
         inst = generate(5, seed=seed, params=Params(capacity=3))
         bf = brute_force(inst)
-        for alg in (ucs, astar, dfbnb, ida_star):
+        for alg in (ucs, astar):
             r = alg(TruckLoadingProblem(inst))
             assert abs(r.cost - bf) < 1e-9, (seed, r.algorithm, r.cost, bf)
             assert abs(evaluate(inst, r.plan).cost - r.cost) < 1e-9
@@ -70,6 +70,16 @@ def test_fixed_fleet_respected():
     inst = generate(8, seed=2, params=Params(max_trucks=1))
     r = astar(TruckLoadingProblem(inst))
     assert evaluate(inst, r.plan).trucks == 1
+
+
+def test_genetic_algorithm_valid_and_reasonable():
+    for seed in range(3):
+        inst = generate(8, seed=seed)
+        opt = astar(TruckLoadingProblem(inst)).cost
+        r = genetic_algorithm(inst, pop_size=30, generations=80, seed=seed)
+        e = evaluate(inst, r.plan)       # raises if the plan is invalid
+        assert abs(e.cost - r.cost) < 1e-9
+        assert r.cost <= opt * 1.5 + 1e-9, (seed, r.cost, opt)  # GA isn't optimal, but shouldn't be far off
 
 
 if __name__ == "__main__":

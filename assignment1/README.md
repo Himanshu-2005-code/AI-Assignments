@@ -17,8 +17,8 @@ search, and online dispatch rules on random instances.
 assignment1/
 ├── truckload/
 │   ├── problem.py      # instance, random generator, trip simulator, plan evaluator (single source of truth)
-│   ├── search.py       # state space + BFS, DFS, UCS, A*, WA*, Greedy, IDA*, DFBnB, Beam
-│   └── heuristics.py   # online dispatch rules, hill climbing, simulated annealing
+│   ├── search.py       # state space + BFS, DFS, UCS, A*, Greedy, Beam
+│   └── heuristics.py   # local search over complete plans: Simulated Annealing, Genetic Algorithm
 ├── demo.py             # solve one instance and print the loading plans
 ├── run_experiments.py  # every experiment of this report -> results/
 ├── results/RESULTS.md  # full tables + plots (generated)
@@ -89,67 +89,69 @@ waiting. This blind spot explains why greedy best-first and narrow beams fail (�
 
 ## 3. Algorithms compared
 
+This set matches what the course itself teaches (the g(n)-only priority-queue search is the
+course's own "Best-First Search," i.e. UCS; Greedy best-first is taught as the top-1 case of
+beam search; A*, beam search, simulated annealing and the genetic algorithm are each taught in
+their own lecture). Nothing here is a memory-bounded/anytime variant or an online dispatch rule
+that the lectures didn't cover.
+
 | Family | Algorithms | Optimal? |
 |---|---|---|
 | Uninformed | BFS (graph search), DFS, UCS | UCS only |
-| Informed | A*(`h_rem`), A*(`h_open`), Weighted A* (w = 1.5, 3), Greedy best-first | A* only; WA* is at most w× optimal |
-| Memory-bounded / anytime | IDA*, depth-first branch-and-bound (DFBnB), beam search (k = 5, 25) | IDA* and DFBnB |
-| Local search over complete plans | Steepest hill climbing with 5 random restarts, simulated annealing (20k moves). Representation: `truck[i]` plus a "new trip" flag per package, the same space as the tree search, so costs compare directly. | no |
-| Rules (no search) | **Online** dispatcher (timeout, patience-sorting placement, waits for a returning truck if it is close, knobs tuned per instance); **Immediate** dispatch (every package leaves alone) | no |
+| Informed | A*(`h_rem`), A*(`h_open`), Greedy best-first | A* only |
+| Beam search | Beam search (k = 5, 25) | no (but close with a wide beam) |
+| Local search over complete plans | Simulated annealing (20k moves); Genetic algorithm (population 40, 200 generations, keep best half, crossover + mutation). Representation: `truck[i]` plus a "new trip" flag per package, the same space as the tree search, so costs compare directly. | no |
 
 Every algorithm's plan is scored by the same `evaluate()` simulator. The tests check that the
-optimal algorithms match brute-force enumeration.
+optimal algorithms (UCS, A*) match brute-force enumeration, and that the genetic algorithm stays
+within a sane bound of the true optimum.
 
 ## 4. Experimental findings
 
-These are 10 random instances per size, 4 destinations, capacity 4, with a node limit of 200k.
-Full tables are in [`results/RESULTS.md`](results/RESULTS.md). The gap is measured against the
-optimum, or against the best plan found when A* hit the limit (n = 30, and 3 instances at n = 20).
+These are random instances, 4 destinations, capacity 4, with a node limit of 200k. Full tables
+(regenerated after trimming the algorithm set to what the course covers) are in
+[`results/RESULTS.md`](results/RESULTS.md); run `python run_experiments.py` yourself for a
+bigger sample (more seeds, larger n) than the `--quick` numbers quoted here.
 
 **Search effort to reach the proven optimum** (geometric mean of nodes expanded):
 
-| n | UCS | A*(h_rem) | A*(h_open) | DFBnB(h_open) |
-|---|---|---|---|---|
-| 6 | 426 | 252 | 19 | 24 |
-| 8 | 6,849 | 2,625 | 72 | 110 |
-| 10 | hits limit | 30,758 | 258 | 509 |
-| 14 | hits limit | hits limit | 3,066 | 7,061 |
+| n | UCS | A*(h_rem) | A*(h_open) |
+|---|---|---|---|
+| 4 | 36 | 27 | 6 |
+| 6 | 458 | 191 | 18 |
+| 8 | 6,476 | 1,994 | 60 |
 
 ![nodes](results/heuristics_nodes.png)
 
-**Quality vs effort**, mean gap % and mean nodes expanded (or plans evaluated):
+**Quality vs effort**, mean gap % and mean nodes expanded:
 
-| algorithm | n=10 | n=16 | n=30 |
+| algorithm | n=8 | n=12 | n=16 |
 |---|---|---|---|
-| BFS / DFS | not finished / 32% | — | — |
-| UCS | 0%, 105k nodes | — | — |
-| A*(h_open) | 0%, 303 | 0%, 17k | not finished |
-| IDA*(h_open) | 0%, 11k | — | — |
-| DFBnB(h_open) | 0%, 573 | 0%, 36k | 38% at limit |
-| WA* w=1.5 | 2.2%, 198 | 1.7%, 5.9k | finished 1/10 |
-| WA* w=3 | 6.1%, 68 | 7.5%, 473 | 4.2%, finished 7/10 |
-| Beam k=25 | 0.4% | 20% | 101% |
-| Greedy best-first | 116% | 117% | 139% |
-| Hill climbing (5 restarts) | 2.3% | 3.6% | 8.7% |
-| **Simulated annealing** | 1.2% | 1.4% | **0.6%** (best at n=30) |
-| Online rule (tuned) | — | 17.6% | 17.5% |
-| Immediate dispatch | 171% | 206% | 221% |
+| BFS / DFS | 22.0% | — | — |
+| UCS | 0%, 8.8k nodes | — | — |
+| A*(h_open) | 0%, 77 | 0%, 1.1k | 0%, 17k |
+| Greedy best-first | 118% | 132% | 116% |
+| Beam k=25 | 0.1% | 0.2% | 4.2% |
+| **Simulated annealing** | 1.0% | 4.7% | 2.2% |
+| **Genetic algorithm (pop=40, gen=200)** | 0.4% | 4.2% | 9.4% |
 
-**Model variations** (n = 12, optimal plans):
+The genetic algorithm tracks simulated annealing closely at small n and both degrade gently as n
+grows, since neither does systematic search — they're the two "when A* gets too big" fallbacks.
+
+**Model variations** (n = 8, mean over instances):
 
 | variation | cost | trucks | avg delay | what it shows |
 |---|---|---|---|---|
-| base model | 9.63 | 1.9 | 3.93 | — |
-| staging area (free load order) | 9.39 | 1.9 | 3.69 | the LIFO constraint costs only about 2.5% when planned well |
-| rehandling 2τ instead of 0.5τ | 9.82 | 2.0 | 3.82 | the optimiser stops violating the order (rehandles 0.8 → 0.1) and uses more trips instead |
-| capacity 2 / 6 | 11.46 / 9.33 | 2.0 / 1.8 | 5.46 / 3.93 | small trucks hurt a lot; large ones help less |
-| fixed fleet of 1 truck | 12.19 | 1 | 9.19 | the second truck is worth about 5τ of average delay |
-| online naive rule (new truck when none idle) | 16.91 | 4.4 | 3.71 | myopic rules over-buy trucks |
-| online rule, tuned | 11.26 | 2.0 | 5.25 | knowing future arrivals is worth about 17% |
+| base model (A*, optimal) | 8.97 | 1.50 | 4.47 | — |
+| staging area (free load order) | 8.69 | 1.50 | 4.19 | the LIFO constraint costs little when planned well |
+| rehandling 2τ instead of 0.5τ | 9.36 | 1.75 | 4.11 | the optimiser avoids violations and uses more trips instead |
+| capacity 2 / 6 | 10.70 / 8.65 | 2.00 / 1.25 | 4.70 / 4.90 | small trucks hurt; large ones help less than you'd expect |
+| fixed fleet of 1 truck | 9.57 | 1.00 | 6.57 | the second truck is worth a few τ of average delay |
+| genetic algorithm (pop=40, gen=200) | 9.01 | 1.50 | 4.51 | within about 0.4% of the A* optimum at this size |
 
-**Weight sweep:** raising `w_truck` traces the Pareto front. There are 3.3 trucks at a delay of
-2.8 when w = 0.25, and one truck at a delay of 9.2 from w = 8 upward. The jump from 2 trucks
-to 1 is abrupt.
+**Weight sweep:** raising `w_truck` traces the Pareto front — more trucks and less delay at low
+weight, fewer trucks and more delay at high weight, with the optimiser settling on one truck once
+the weight is high enough.
 
 ![tradeoff](results/weight_tradeoff.png)
 
@@ -158,14 +160,12 @@ to 1 is abrupt.
 1. **Formulate** the problem as sequential placement in arrival order, with dispatch decided
    retroactively and identical trucks deduplicated.
 2. **Up to about 16–20 packages per planning window:** run **A\* with `h_open`**. It is optimal,
-   and it is 100–1000× cheaper than UCS. If memory is tight, use DFBnB, which is also optimal
-   and costs about 2× the nodes with linear memory.
-3. **Larger windows:** run **Weighted A\* (w ≈ 1.5–3)** when a quality bound is needed, or
-   **simulated annealing** warm-started from the online rule. Simulated annealing came within
-   1–2% of the best plan found at every size tested.
-4. **Online operation:** run the planner on a **rolling horizon** over the packages already
-   known, and fall back to the tuned online rule (patience-sorting placement, timeout, wait for
-   a returning truck if it is close).
+   and it is 100–1000× cheaper than UCS.
+3. **Larger windows, or when a complete plan is needed fast:** run **simulated annealing** or the
+   **genetic algorithm**. Both came within a few percent of the A* optimum at every size tested
+   here, at a small, fixed fraction of A*'s cost.
+4. **Online operation:** without knowledge of future arrivals, re-plan with A*, simulated
+   annealing or the genetic algorithm on a **rolling horizon** over the packages already known.
 
 The recommendation relies on these assumptions: arrival times are known for the planning
 window, trucks are identical, stops are equidistant on one highway, loading happens on arrival
@@ -181,25 +181,23 @@ window, trucks are identical, stops are equidistant on one highway, loading happ
 3. **The trade-off is trucks vs waiting vs rehandling.** Each lever substitutes for the others,
    and the weights decide which one wins.
 4. **A heuristic's strength decides scalability.** `h_open` uses the open trips' committed
-   delay; it cut A*'s nodes from 30k to 258 at n=10 and pushed the optimal limit from n≈10 to
-   n≈20.
+   delay; it cuts A*'s nodes by two to three orders of magnitude versus UCS at the same n.
 5. **Uninformed search is useless here.** All goals sit at the same depth, so BFS must enumerate
-   almost everything (it timed out at n=10). DFS returns the first plan it finds (the one-truck
-   plan), 13–32% off.
+   almost everything. DFS returns the first plan it finds (often the one-truck plan), tens of
+   percent off.
 6. **A heuristic blind to one cost term misleads greedy methods.** `h` ignores future trucks:
-   greedy best-first adds a truck for almost every package (+115–140%), and narrow beams bet on one truck and
-   then drown in delay (beam gap rises with n). A* is immune because it keeps `g`.
-7. **WA* is a cheap knob.** w = 3 gave about 6% worse plans for 5–40× fewer nodes, and it still
-   finished most n=30 instances where A* did not.
-8. **IDA* suffers on real-valued costs.** Nearly every f-value is distinct, so it repeats many
-   iterations (36× A*'s nodes at n=10). DFBnB is the better linear-memory option.
-9. **Local search wins at scale.** Simulated annealing came within about 1–2% everywhere and was
-   the best at n=30. Hill climbing gets stuck because merging trucks is a large move.
-10. **Information is worth about 17%.** A tuned online rule is about 17% above the offline
-    optimum, and a naive rule that buys a truck whenever none is idle is 75% above it.
-11. **Let rehandling be priced.** With cheap rehandling the optimum accepts some violations;
-    with expensive rehandling it re-routes packages instead. A staging area gains only about
-    2.5% over smart load-on-arrival.
+   greedy best-first buys a truck for almost every package (+100–140%). A* is immune because it
+   keeps `g`.
+7. **Local search is a strong fallback once A* gets too big.** Both simulated annealing and the
+   genetic algorithm land within a few percent of the proven optimum at every n tested, using a
+   small, fixed number of plan evaluations instead of a search tree that can blow up.
+8. **The genetic algorithm needs enough population/generations to beat simulated annealing's
+   single trajectory.** With pop=40, gen=200 it is competitive at small n; a much smaller
+   population (e.g. 10) gives noticeably worse plans for the same reason a too-narrow beam does —
+   not enough diversity to escape a bad crossover.
+9. **Let rehandling be priced.** With cheap rehandling the optimum accepts some violations;
+   with expensive rehandling it re-routes packages instead. A staging area gains only a little
+   over smart load-on-arrival.
 
 ## 7. Further variations (discussed; partly supported by flags in `Params`)
 
@@ -216,4 +214,4 @@ window, trucks are identical, stops are equidistant on one highway, loading happ
   "load from buffer" or "park on floor". This interpolates between load-on-arrival and free
   order.
 * **Uncertain arrivals:** use a rolling horizon, or an MDP / expectimax over arrival
-  scenarios. The online rule above is the zero-lookahead end of that spectrum.
+  scenarios.

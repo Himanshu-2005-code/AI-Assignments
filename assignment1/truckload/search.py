@@ -18,12 +18,15 @@ A trip departs at max(truck back, last package of the trip arrived), so
 
 Duplicate detection: trucks are identical, so the truck list is sorted; a
 ``free_at`` that is no later than the moment it can matter is replaced by 0.
+
+Algorithms here are the ones covered in lecture (BFS/DFS, the g(n)-only
+priority-queue search the course calls "Best-First Search" (= UCS), A*,
+Greedy best-first as the top-1 case of beam search, and beam search itself).
 """
 from __future__ import annotations
 
 import heapq
 import itertools
-import math
 import time
 from collections import deque
 from dataclasses import dataclass
@@ -177,7 +180,7 @@ def _result(name, prob, goal, expanded, generated, t0, status="ok"):
 
 
 # --------------------------------------------------------------------------
-# Uninformed tree/graph searches
+# Uninformed tree/graph searches (BFS, DFS)
 # --------------------------------------------------------------------------
 def bfs(prob: TruckLoadingProblem, node_limit: int = 10**6) -> SearchResult:
     t0 = time.perf_counter()
@@ -222,7 +225,9 @@ def dfs(prob: TruckLoadingProblem, node_limit: int = 10**6) -> SearchResult:
 
 
 # --------------------------------------------------------------------------
-# Best-first family: UCS, A*, weighted A*, greedy best-first
+# Best-first family: UCS (= the g(n)-only priority-queue search taught as
+# "Best-First Search" on Aug 20), A*, and Greedy best-first (the top-1 case
+# of beam search, Sep 1).
 # --------------------------------------------------------------------------
 def best_first(prob: TruckLoadingProblem, name: str, h: Callable[[Node], float],
                wg: float = 1.0, wh: float = 1.0, node_limit: int = 10**6) -> SearchResult:
@@ -257,91 +262,8 @@ def astar(prob, heuristic="h_open", **kw):
     return best_first(prob, f"A*({heuristic})", getattr(prob, HEURISTICS[heuristic]), **kw)
 
 
-def weighted_astar(prob, w=2.0, heuristic="h_open", **kw):
-    return best_first(prob, f"WA*(w={w:g})", getattr(prob, HEURISTICS[heuristic]), wh=w, **kw)
-
-
 def greedy(prob, heuristic="h_open", **kw):
     return best_first(prob, "Greedy-BeFS", getattr(prob, HEURISTICS[heuristic]), wg=0.0, **kw)
-
-
-# --------------------------------------------------------------------------
-# Memory-bounded / anytime alternatives
-# --------------------------------------------------------------------------
-def ida_star(prob, heuristic="h_open", node_limit: int = 10**6) -> SearchResult:
-    """IDA*: no duplicate detection, threshold grows to the smallest f that
-    exceeded it. Real-valued costs make it run many iterations."""
-    t0 = time.perf_counter()
-    h = getattr(prob, HEURISTICS[heuristic])
-    start = prob.initial()
-    bound = h(start)
-    counters = [0, 0]
-
-    def search(node):
-        f = node.g + h(node)
-        if f > bound + 1e-9:
-            return f, None
-        if node.done:
-            return f, node
-        counters[0] += 1
-        if counters[0] > node_limit:
-            raise TimeoutError
-        nxt = INF
-        children = prob.successors(node)
-        counters[1] += len(children)
-        for ch in sorted(children, key=lambda c: c.g + h(c)):
-            t, found = search(ch)
-            if found is not None:
-                return t, found
-            nxt = min(nxt, t)
-        return nxt, None
-
-    try:
-        while True:
-            t, found = search(start)
-            if found is not None:
-                return _result(f"IDA*({heuristic})", prob, found, counters[0], counters[1], t0)
-            if t == INF:
-                return _result(f"IDA*({heuristic})", prob, None, counters[0], counters[1], t0, "fail")
-            bound = t
-    except TimeoutError:
-        return _result(f"IDA*({heuristic})", prob, None, counters[0], counters[1], t0, "limit")
-
-
-def dfbnb(prob, heuristic="h_open", node_limit: int = 10**6, incumbent: float = INF) -> SearchResult:
-    """Depth-first branch and bound: optimal, linear memory along the path
-    (plus a transposition table here), children ordered by f."""
-    t0 = time.perf_counter()
-    h = getattr(prob, HEURISTICS[heuristic])
-    best = [incumbent, None]
-    best_g: Dict = {}
-    counters = [0, 0]
-
-    def search(node):
-        if node.done:
-            if node.g < best[0] - 1e-12:
-                best[0], best[1] = node.g, node
-            return
-        if node.g >= best_g.get(node.key, INF) - 1e-12:
-            return
-        best_g[node.key] = node.g
-        counters[0] += 1
-        if counters[0] > node_limit:
-            raise TimeoutError
-        children = prob.successors(node)
-        counters[1] += len(children)
-        scored = sorted(((c.g + h(c), c) for c in children), key=lambda x: x[0])
-        for f, ch in scored:
-            if f < best[0] - 1e-12:
-                search(ch)
-
-    status = "ok"
-    try:
-        search(prob.initial())
-    except TimeoutError:
-        status = "limit"
-    res = _result(f"DFBnB({heuristic})", prob, best[1], counters[0], counters[1], t0, status)
-    return res
 
 
 def beam_search(prob, width=10, heuristic="h_open") -> SearchResult:
