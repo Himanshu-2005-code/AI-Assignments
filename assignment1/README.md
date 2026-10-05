@@ -10,8 +10,8 @@ cost = w_truck * (#trucks assigned to the centre) + w_delay * (average delivery 
 
 where the delivery time of a package runs from its arrival at the dispatch centre until it
 is unloaded at its destination. The problem is modelled as **state-space search**, and the
-code compares uninformed search, informed search, memory-bounded and anytime search, local
-search, and online dispatch rules on random instances.
+code compares uninformed search, informed search, beam search, and local search over complete
+plans on random instances — exactly the algorithm families the course itself teaches (§3).
 
 ```
 assignment1/
@@ -32,6 +32,33 @@ python demo.py --n 10 --seed 3            # see the plans the algorithms produce
 python tests/test_truckload.py            # or: python -m pytest tests
 python run_experiments.py [--quick]       # regenerates results/
 ```
+
+---
+
+## Summary: what each algorithm does, and which wins
+
+A cheat sheet before the detail below. Numbers are from `results/RESULTS.md` at n = 8
+(4 random instances); see §3 for the full algorithm set and §4 for every size tested.
+
+| Algorithm | Idea | Optimal? | n=8: gap / nodes | Verdict |
+|---|---|---|---|---|
+| BFS | Expand the search level by level | No — costs aren't uniform per step | 21.2%, 5.8k nodes | Correct depth, wrong metric; not worth running |
+| DFS | Dive straight down, take the first complete plan | No | 21.2%, 9 nodes | Cheap but lucky-or-not; no guarantee |
+| UCS | The course's own "Best-First Search": always expand the cheapest `g` | Yes | 0.0%, 3.6k nodes | The optimal baseline — correct, but slow |
+| A\*(`h_rem`) | UCS plus a weak admissible heuristic (driving time only) | Yes | 0.0%, 2.0k nodes | Optimal, a modest speedup over UCS |
+| A\*(`h_open`) | UCS plus the stronger heuristic (driving time + committed delay of open trips) | Yes | 0.0%, 74 nodes | **Best choice** up to ~16–20 packages — optimal and cheap |
+| Greedy best-first | Always take the lowest `h`, ignore `g` entirely | No | 106.5% | The clear loser — blind to the truck term, buys a truck for nearly every package |
+| Beam (k=5) | Keep only the 5 best partial plans at each depth | No | 2.7% | Cheap, occasionally stuck with too narrow a beam |
+| Beam (k=25) | Keep the 25 best | No, but close | 0.0% | Near-optimal here, still far cheaper than UCS |
+| Simulated annealing | Perturb one candidate plan, cool a temperature over time | No | 0.0% (degrades to 1.3% by n=16) | The steadiest fallback once A\* gets too big |
+| Genetic algorithm | Evolve a population of candidate plans (crossover + mutation) | No | 0.0% (degrades to 20% by n=16 at this fixed budget) | Competitive with SA at small/medium n; needs a bigger population to keep scaling |
+
+**Bottom line:** for anything A\* can still search in reasonable time, **A\*(`h_open`) wins outright**
+— optimal and, at n=8, about 48× fewer nodes than UCS. Once the instance is too large for that,
+**simulated annealing is the more dependable fallback** of the two local-search methods; the
+genetic algorithm matches it at small sizes but its fixed population/generation budget falls
+behind as n grows (§4, §6). **Greedy best-first is the one algorithm to actively avoid** — it
+optimises the wrong signal and routinely buys far more trucks than it needs.
 
 ---
 
