@@ -76,19 +76,18 @@ class Result:
 # --------------------------------------------------------------------------
 # Instance generation
 # --------------------------------------------------------------------------
-def generate(n: int, num_dest: int = 4, rate: float = 2.0, seed: int = 0,
-             params: Params = Params(), dest_weights: Optional[Sequence[float]] = None,
-             resolution: float = 0.1) -> Instance:
-    """Random instance: Poisson arrivals with ``rate`` packages per tau,
-    destinations uniform (or drawn with ``dest_weights``)."""
+def generate(n: int, num_dest: int = 4, seed: int = 0,
+             params: Params = Params(), dest_weights: Optional[Sequence[float]] = None) -> Instance:
+    """Random instance: n packages, one arriving per tick (0, 1, 2, ...), with a
+    random sequence of destinations (uniform, or drawn with ``dest_weights``).
+    The only randomness is which destination lands at which arrival position -
+    package arrival order and spacing are otherwise just a fixed count-up."""
     rng = random.Random(seed)
-    t = 0.0
     pkgs = []
     dests = list(range(1, num_dest + 1))
     for i in range(n):
-        t += rng.expovariate(rate)
         d = rng.choices(dests, weights=dest_weights)[0] if dest_weights else rng.choice(dests)
-        pkgs.append(Package(i, round(round(t / resolution) * resolution, 6), d))
+        pkgs.append(Package(i, float(i), d))
     return Instance(tuple(pkgs), params, num_dest)
 
 

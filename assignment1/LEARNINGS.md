@@ -55,10 +55,10 @@ simulated annealing (Sep 3), and the genetic algorithm (Sep 10).
 
 | Fact | Value |
 |---|---|
-| A* `h_open` vs UCS nodes, n = 8 | 74 vs 3,568 |
-| Genetic algorithm gap to optimum, n = 8 / n = 16 | 0.0% / 20.0% |
-| Simulated annealing gap to optimum, n = 8 / n = 16 | 0.0% / 1.3% |
-| Value of a 2nd truck (fixed fleet of 1 vs free), n = 8 | average delay 8.57 → 4.17 |
+| A* `h_open` vs UCS nodes, n = 8 | 46 vs 1,678 |
+| Genetic algorithm gap to optimum, n = 8 / n = 16 | 0.9% / 15.2% |
+| Simulated annealing gap to optimum, n = 8 / n = 16 | 0.0% / 5.0% |
+| Value of a 2nd truck (fixed fleet of 1 vs free), n = 8 | average delay 7.44 → 4.59 |
 
 ## Likely questions, short answers
 

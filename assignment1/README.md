@@ -37,21 +37,21 @@ Numbers from `results/RESULTS.md`, n = 8 (full tables: §4).
 
 | Algorithm | Idea | Optimal | n=8: gap / nodes |
 |---|---|---|---|
-| BFS | expand level by level | no | 21.2%, 5.8k nodes |
-| DFS | first complete plan found | no | 21.2%, 9 nodes |
-| UCS | expand cheapest `g` first | yes | 0.0%, 3.6k nodes |
-| A\*(`h_rem`) | UCS + driving-time heuristic | yes | 0.0%, 2.0k nodes |
-| A\*(`h_open`) | UCS + heuristic incl. open trips | yes | 0.0%, 74 nodes |
-| Greedy best-first | lowest `h`, ignores `g` | no | 106.5% |
-| Beam (k=5) | keep 5 best partial plans | no | 2.7% |
+| BFS | expand level by level | no | 14.2%, 2.9k nodes |
+| DFS | first complete plan found | no | 14.2%, 9 nodes |
+| UCS | expand cheapest `g` first | yes | 0.0%, 1.7k nodes |
+| A\*(`h_rem`) | UCS + driving-time heuristic | yes | 0.0%, 938 nodes |
+| A\*(`h_open`) | UCS + heuristic incl. open trips | yes | 0.0%, 46 nodes |
+| Greedy best-first | lowest `h`, ignores `g` | no | 53.9% |
+| Beam (k=5) | keep 5 best partial plans | no | 0.9% |
 | Beam (k=25) | keep 25 best | no | 0.0% |
-| Simulated annealing | perturb one plan, cool over time | no | 0.0% (1.3% at n=16) |
-| Genetic algorithm | evolve a population of plans | no | 0.0% (20% at n=16) |
+| Simulated annealing | perturb one plan, cool over time | no | 0.0% (5.0% at n=16) |
+| Genetic algorithm | evolve a population of plans | no | 0.9% (15.2% at n=16) |
 
 **Use A\*(`h_open`)** up to ~16–20 packages — optimal, far fewer nodes than UCS. Beyond that,
-**simulated annealing** is the steadier fallback; the genetic algorithm matches it at small n
-but falls behind at n=16 with a fixed population. **Avoid greedy best-first** — it ignores the
-truck cost and buys far too many trucks.
+**simulated annealing** is the steadier fallback; the genetic algorithm tracks it at small n
+but falls behind at n=16. **Avoid greedy best-first** — it ignores the truck cost and buys far
+too many trucks.
 
 ---
 
@@ -60,7 +60,7 @@ truck cost and buys far too many trucks.
 | Item | Choice |
 |---|---|
 | Geography | One highway, equidistant stops. Stop `k` is `k·τ` from the depot. |
-| Arrivals | Known in advance, Poisson at 2 packages per τ. |
+| Arrivals | Known in advance. One package arrives per tick, in a random destination sequence. |
 | Trucks | Identical, capacity `C` (default 4). Number of trucks is a decision. |
 | Loading | Load-on-arrival. Truck is a stack: last loaded is nearest the door. |
 | Ordering | **Hard rule.** A package can join a trip only if its destination is at or before the one currently at the door. Otherwise that move doesn't exist. |
@@ -114,9 +114,9 @@ that the genetic algorithm stays within a sane bound of the optimum.
 
 | n | UCS | A\*(h_rem) | A\*(h_open) |
 |---|---|---|---|
-| 4 | 24 | 18 | 6 |
-| 6 | 207 | 97 | 15 |
-| 8 | 2,191 | 885 | 55 |
+| 4 | 19 | 18 | 7 |
+| 6 | 123 | 108 | 18 |
+| 8 | 852 | 504 | 42 |
 
 ![nodes](results/heuristics_nodes.png)
 
@@ -124,30 +124,28 @@ that the genetic algorithm stays within a sane bound of the optimum.
 
 | algorithm | n=8 | n=12 | n=16 |
 |---|---|---|---|
-| BFS / DFS | 21.2% | — | — |
-| UCS | 0.0%, 3.6k | — | — |
-| A\*(h_open) | 0.0%, 74 | 0.0%, 527 | 0.0%, 3.2k |
-| Greedy best-first | 106.5% | 125.9% | 115.2% |
-| Beam k=25 | 0.0% | 0.0% | 0.9% |
-| Simulated annealing | 0.0% | 0.4% | 1.3% |
-| Genetic algorithm | 0.0% | 1.9% | 20.0% |
+| BFS / DFS | 14.2% | — | — |
+| UCS | 0.0%, 1.7k | — | — |
+| A\*(h_open) | 0.0%, 46 | 0.0%, 306 | 0.0%, 1.1k |
+| Greedy best-first | 53.9% | 64.2% | 68.6% |
+| Beam k=25 | 0.0% | 0.0% | 0.5% |
+| Simulated annealing | 0.0% | 0.4% | 5.0% |
+| Genetic algorithm | 0.9% | 2.4% | 15.2% |
 
-GA keeps pace with SA up to n=12, then falls behind at n=16 — a fixed population/generation
+GA tracks SA up to n=12, then falls further behind at n=16 — a fixed population/generation
 budget doesn't scale as well as SA's single long trajectory.
 
 **Model variations** (n = 8):
 
 | variation | cost | trucks | avg delay |
 |---|---|---|---|
-| base (A\*, optimal) | 9.42 | 1.75 | 4.17 |
-| bigger trucks (cap 6) | 9.33 | 1.75 | 4.08 |
-| smaller trucks (cap 2) | 10.70 | 2.00 | 4.70 |
-| fixed fleet of 1 | 11.57 | 1.00 | 8.57 |
-| busier centre | 9.50 | 1.75 | 4.25 |
-| quieter centre | 9.02 | 1.50 | 4.52 |
-| skewed destinations | 8.72 | 2.00 | 2.72 |
-| GA (pop=40) | 9.42 | 1.75 | 4.17 |
-| GA (pop=10) | 9.97 | 2.00 | 3.97 |
+| base (A\*, optimal) | 9.09 | 1.50 | 4.59 |
+| bigger trucks (cap 6) | 9.09 | 1.50 | 4.59 |
+| smaller trucks (cap 2) | 9.56 | 1.75 | 4.31 |
+| fixed fleet of 1 | 10.44 | 1.00 | 7.44 |
+| skewed destinations | 7.78 | 1.00 | 4.78 |
+| GA (pop=40) | 9.19 | 1.50 | 4.69 |
+| GA (pop=10) | 9.53 | 1.75 | 4.28 |
 
 **Weight sweep:** raising `w_truck` trades trucks for delay, settling on 1 truck once the
 weight is high enough.

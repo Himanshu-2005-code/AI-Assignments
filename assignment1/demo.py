@@ -13,12 +13,11 @@ def main():
     ap.add_argument("--n", type=int, default=10)
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--dest", type=int, default=4)
-    ap.add_argument("--rate", type=float, default=2.0)
     ap.add_argument("--capacity", type=int, default=4)
     ap.add_argument("--w-truck", type=float, default=3.0)
     a = ap.parse_args()
     params = Params(capacity=a.capacity, w_truck=a.w_truck)
-    inst = generate(a.n, a.dest, a.rate, a.seed, params)
+    inst = generate(a.n, a.dest, a.seed, params)
     print("packages (id, arrival, dest):")
     print("  " + "  ".join(f"p{p.id}@{p.arrival:g}->{p.dest}" for p in inst.packages))
     for f in (ucs, astar):
