@@ -1,4 +1,4 @@
-"""Sanity tests:  python -m pytest tests  (or python tests/test_truckload.py)"""
+# Sanity tests. Run: python -m pytest tests  (or python tests/test_truckload.py)
 import itertools
 import os
 import sys
@@ -69,6 +69,7 @@ def test_optimal_algorithms_agree_with_brute_force():
             assert abs(evaluate(inst, r.plan).cost - r.cost) < 1e-9
 
 
+# h_open and h_remaining must never overestimate the true remaining cost.
 def test_heuristics_admissible():
     for seed in range(5):
         inst = generate(7, seed=seed)
@@ -79,12 +80,14 @@ def test_heuristics_admissible():
         assert P.h_remaining(root) <= P.h_open(root) + 1e-9
 
 
+# max_trucks must actually cap the fleet size in the returned plan.
 def test_fixed_fleet_respected():
     inst = generate(8, seed=2, params=Params(max_trucks=1))
     r = astar(TruckLoadingProblem(inst))
     assert evaluate(inst, r.plan).trucks == 1
 
 
+# GA's plan must be valid and land reasonably close to the known optimum.
 def test_genetic_algorithm_valid_and_reasonable():
     for seed in range(3):
         inst = generate(8, seed=seed)

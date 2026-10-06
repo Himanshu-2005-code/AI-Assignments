@@ -1,23 +1,5 @@
-"""Problem definition, random instance generator and the plan evaluator.
-
-Model (see README for the full discussion of assumptions):
-
-* Packages arrive at the dispatch centre at known times ``arrival`` and carry an
-  integer destination ``dest`` in 1..D.
-* Destinations lie on one highway leaving the depot; stop ``k`` is ``k * tau``
-  time units from the depot, consecutive stops are ``tau`` apart.
-* All trucks are identical with capacity ``capacity``. A *trip* is one loading
-  of a truck followed by a run out to its farthest stop and back.
-* Packages unload from the front of the truck, so within one trip they must be
-  loaded with non-increasing destinations (the next stop's package is always
-  nearest the door). This is enforced as a hard rule on which packages a trip
-  may accept, not a cost to pay afterwards: if the next package waiting would
-  need to come out before one already loaded, that trip simply cannot take it,
-  and it has to start a new trip (or a new truck) instead.
-* A trip departs at ``max(truck back at depot, last package of the trip has
-  arrived, optional explicit depart_at)``.
-* Objective: ``w_truck * #trucks + w_delay * mean(delivery time - arrival)``.
-"""
+# Problem definition: the data model, the random instance generator, and the
+# plan evaluator (the single source of truth for scoring any plan).
 from __future__ import annotations
 
 import random
@@ -25,6 +7,7 @@ from dataclasses import dataclass, field
 from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
 
+# One package: when it arrived, and which stop it's going to.
 @dataclass(frozen=True)
 class Package:
     id: int
@@ -32,15 +15,17 @@ class Package:
     dest: int
 
 
+# Fixed knobs for one problem instance.
 @dataclass(frozen=True)
 class Params:
-    capacity: int = 4
-    tau: float = 1.0          # travel time between consecutive stops
-    w_truck: float = 3.0      # weight of one truck assigned to the centre
-    w_delay: float = 1.0      # weight of one time unit of average delivery time
-    max_trucks: Optional[int] = None  # fixed fleet variant (None = unlimited)
+    capacity: int = 4                 # packages per trip
+    tau: float = 1.0                  # travel time between consecutive stops
+    w_truck: float = 3.0              # cost of one truck
+    w_delay: float = 1.0              # cost of one unit of average delay
+    max_trucks: Optional[int] = None  # fixed fleet size (None = unlimited)
 
 
+# One randomly generated problem: its packages, its params, and how many stops exist.
 @dataclass(frozen=True)
 class Instance:
     packages: Tuple[Package, ...]
@@ -52,6 +37,7 @@ class Instance:
         return len(self.packages)
 
 
+# One truck's one trip: which packages, in load order, and when it's loaded.
 @dataclass
 class Trip:
     truck: int
@@ -59,6 +45,7 @@ class Trip:
     depart_at: Optional[float] = None  # earliest allowed departure (online policies)
 
 
+# The score of one complete plan, plus (optionally) the schedule that produced it.
 @dataclass
 class Result:
     cost: float
@@ -73,74 +60,61 @@ class Result:
                 f"avg_delay={self.avg_delay:.3f}")
 
 
-# --------------------------------------------------------------------------
-# Instance generation
-# --------------------------------------------------------------------------
+# Build one random instance: n packages, one arriving per tick, destinations random.
 def generate(n: int, num_dest: int = 4, seed: int = 0,
              params: Params = Params(), dest_weights: Optional[Sequence[float]] = None) -> Instance:
-    """Random instance: n packages, one arriving per tick (0, 1, 2, ...), with a
-    random sequence of destinations (uniform, or drawn with ``dest_weights``).
-    The only randomness is which destination lands at which arrival position -
-    package arrival order and spacing are otherwise just a fixed count-up."""
     rng = random.Random(seed)
     pkgs = []
     dests = list(range(1, num_dest + 1))
     for i in range(n):
         d = rng.choices(dests, weights=dest_weights)[0] if dest_weights else rng.choice(dests)
-        pkgs.append(Package(i, float(i), d))
+        pkgs.append(Package(i, float(i), d))  # package i arrives at tick i
     return Instance(tuple(pkgs), params, num_dest)
 
 
+# Build an instance from an explicit list of arrival times and destinations.
 def from_lists(arrivals: Sequence[float], dests: Sequence[int], params: Params = Params()) -> Instance:
     pkgs = tuple(Package(i, float(a), int(d)) for i, (a, d) in enumerate(zip(arrivals, dests)))
     assert all(pkgs[i].arrival <= pkgs[i + 1].arrival for i in range(len(pkgs) - 1)), "sort by arrival"
     return Instance(pkgs, params, max(dests))
 
 
-# --------------------------------------------------------------------------
-# Trip simulation
-# --------------------------------------------------------------------------
+# Drive one trip out and back; return each package's delivery time and the truck's return time.
 def simulate_trip(inst: Instance, ids: Sequence[int], depart: float):
-    """Drive one trip out along the highway and back. ``ids`` is already in
-    load order (non-increasing destination), so the truck never has to dig
-    for a package - it simply unloads whoever is at the door at each stop.
-    Returns (delivery time per id, return time)."""
     p = inst.params
     pk = inst.packages
-    t, pos = depart, 0
+    t, pos = depart, 0           # t = current time, pos = current stop
     delivered: Dict[int, float] = {}
-    for s in sorted({pk[j].dest for j in ids}):
+    for s in sorted({pk[j].dest for j in ids}):   # visit each stop in increasing order
         t += (s - pos) * p.tau
         pos = s
         for j in ids:
             if pk[j].dest == s:
                 delivered[j] = t
-    return delivered, t + pos * p.tau
+    return delivered, t + pos * p.tau   # (delivery times, time back at the depot)
 
 
+# Total delay (delivered - arrival) summed over one trip's packages.
 def trip_delay_sum(inst: Instance, ids: Sequence[int], depart: float):
     delivered, ret = simulate_trip(inst, ids, depart)
     return sum(delivered[j] - inst.packages[j].arrival for j in ids), ret
 
 
-# --------------------------------------------------------------------------
-# Plan evaluation (single source of truth for every algorithm)
-# --------------------------------------------------------------------------
+# Score a complete plan: validates it, then computes trucks/avg delay/cost.
 def evaluate(inst: Instance, plan: Sequence[Trip], keep_schedule: bool = False) -> Result:
-    """Trips of the same truck are executed in the order they appear in ``plan``."""
     p = inst.params
     pk = inst.packages
     seen = sorted(j for tr in plan for j in tr.ids)
     if seen != list(range(inst.n)):
         raise ValueError("plan must deliver every package exactly once")
-    free: Dict[int, float] = {}
-    delays: Dict[int, float] = {}
+    free: Dict[int, float] = {}     # truck id -> time it's next free
+    delays: Dict[int, float] = {}   # package id -> its delivery delay
     schedule = []
     for tr in plan:
         if len(tr.ids) > p.capacity:
             raise ValueError("trip exceeds capacity")
         prev_dest = None
-        for j in tr.ids:
+        for j in tr.ids:   # hard rule: load order must be non-increasing destination
             d = pk[j].dest
             if prev_dest is not None and d > prev_dest:
                 raise ValueError("trip loads a farther package behind a nearer one")
@@ -163,6 +137,7 @@ def evaluate(inst: Instance, plan: Sequence[Trip], keep_schedule: bool = False) 
     return Result(cost, trucks, avg, max(delays.values()), len(plan), schedule)
 
 
+# Human-readable rendering of a plan's cost and truck-by-truck schedule.
 def describe(inst: Instance, plan: Sequence[Trip]) -> str:
     r = evaluate(inst, plan, keep_schedule=True)
     lines = [r.short()]

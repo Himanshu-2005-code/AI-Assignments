@@ -1,28 +1,5 @@
-"""State-space formulation and the search algorithms.
-
-State  : (i, trucks) where ``i`` is the next package to place and each truck is
-         (free_at, open_trip). ``free_at`` is when the truck is back from its
-         last dispatched trip; ``open_trip`` is the tuple of packages loaded so
-         far (in load order) on the trip currently at the dock.
-Actions: for package i
-           APPEND k  - load it on truck k's open trip (if not full)
-           NEW k     - dispatch truck k's open trip (if any), start a new trip
-                       on truck k with package i
-           TRUCK     - bring in an additional truck, start a trip with i
-         When i == n a single FINISH action dispatches every open trip.
-Cost   : w_truck when a truck is added, w_delay/n * (sum of delays) of a trip
-         when it is dispatched. Path cost of a goal = objective of the plan.
-
-A trip departs at max(truck back, last package of the trip arrived), so
-"dispatch" can be decided retroactively (offline problem, arrivals known).
-
-Duplicate detection: trucks are identical, so the truck list is sorted; a
-``free_at`` that is no later than the moment it can matter is replaced by 0.
-
-Algorithms here are the ones covered in lecture (BFS/DFS, the g(n)-only
-priority-queue search the course calls "Best-First Search" (= UCS), A*,
-Greedy best-first as the top-1 case of beam search, and beam search itself).
-"""
+# State-space formulation (state, actions, cost, heuristics) and the tree/
+# graph search algorithms: BFS, DFS, UCS, A*, Greedy best-first, Beam search.
 from __future__ import annotations
 
 import heapq
@@ -37,6 +14,7 @@ from .problem import Instance, Trip, trip_delay_sum
 INF = float("inf")
 
 
+# One search-tree node: next package to place, each truck's status, and cost so far.
 class Node:
     __slots__ = ("i", "trucks", "done", "g", "parent", "closed", "key", "depth")
 
@@ -51,6 +29,7 @@ class Node:
         self.depth = 0 if parent is None else parent.depth + 1
 
 
+# What a search run returns: the plan found (if any) and the search stats.
 @dataclass
 class SearchResult:
     algorithm: str
@@ -66,6 +45,7 @@ class SearchResult:
         return self.plan is not None
 
 
+# Wraps one problem instance as a state-space problem: state, actions, cost, heuristics.
 class TruckLoadingProblem:
     def __init__(self, inst: Instance):
         self.inst = inst
@@ -74,13 +54,12 @@ class TruckLoadingProblem:
         self.arr = [pk.arrival for pk in inst.packages]
         self.dest = [pk.dest for pk in inst.packages]
         self.coef = self.p.w_delay / self.n
-        # suffix sums for the "remaining packages" part of the heuristics
-        self.rem = [0.0] * (self.n + 1)
+        self.rem = [0.0] * (self.n + 1)   # rem[j] = driving time left for packages j..n-1
         for j in range(self.n - 1, -1, -1):
             self.rem[j] = self.rem[j + 1] + self.dest[j] * self.p.tau
         self._open_cache: Dict[Tuple, float] = {}
 
-    # -- state helpers ----------------------------------------------------
+    # Canonical key for a state: trucks sorted, so identical trucks don't duplicate states.
     def make_key(self, i, trucks, done):
         if done:
             return ("done",)
@@ -92,20 +71,23 @@ class TruckLoadingProblem:
         sig.sort()
         return (i, tuple(sig))
 
+    # The start state: no packages placed, no trucks.
     def initial(self) -> Node:
         return Node(0, (), False, 0.0, None, [], self.make_key(0, (), False))
 
+    # Cost and return time of sending one trip out now.
     def dispatch(self, free, ids):
         depart = max(free, self.arr[ids[-1]])
         s, ret = trip_delay_sum(self.inst, ids, depart)
         return self.coef * s, ret
 
+    # All legal next states from this one: APPEND / NEW / TRUCK, or FINISH at the end.
     def successors(self, node: Node) -> List[Node]:
         out = []
         if node.done:
             return out
         i, trucks = node.i, node.trucks
-        if i == self.n:  # FINISH
+        if i == self.n:  # FINISH: dispatch every remaining open trip
             cost, closed = 0.0, []
             for free, ids, tid in trucks:
                 if ids:
@@ -124,34 +106,30 @@ class TruckLoadingProblem:
             out.append(Node(i + 1, new_trucks, False, node.g + step, node, closed, key))
 
         for k, (free, ids, tid) in enumerate(trucks):
-            # APPEND k: only if the trip still has room AND the new package doesn't
-            # need to come out before the one currently at the door - packages
-            # unload from the front, so a trip's load order must be non-increasing
-            # in destination. This is the hard rule the assignment asks for; there
-            # is no "load it anyway and pay a penalty" option.
+            # APPEND k: only if the trip has room AND the new package's destination
+            # is at or before the one currently at the door (hard ordering rule) -
+            # there is no "load it anyway and pay a penalty" option.
             if ids and len(ids) < self.p.capacity and self.dest[i] <= self.dest[ids[-1]]:
                 push(trucks[:k] + ((free, ids + (i,), tid),) + trucks[k + 1:], 0.0, [])
-            if ids:  # NEW k (dispatch the open trip first)
+            if ids:  # NEW k: dispatch the open trip first, then start a new one
                 c, ret = self.dispatch(free, ids)
                 push(trucks[:k] + ((ret, (i,), tid),) + trucks[k + 1:], c, [Trip(tid, ids)])
-            else:    # idle truck takes the package
+            else:    # idle truck just takes the package
                 push(trucks[:k] + ((free, (i,), tid),) + trucks[k + 1:], 0.0, [])
         if self.p.max_trucks is None or len(trucks) < self.p.max_trucks:  # TRUCK
             push(trucks + ((0.0, (i,), len(trucks)),), self.p.w_truck, [])
         return out
 
-    # -- heuristics ---------------------------------------------------------
+    # Trivial heuristic (h=0 everywhere) - using it turns best_first into plain UCS.
     def h_zero(self, node: Node) -> float:
         return 0.0
 
+    # Lower bound: every unplaced package needs at least its own driving time.
     def h_remaining(self, node: Node) -> float:
-        """Every unplaced package needs at least its pure driving time."""
         return 0.0 if node.done else self.coef * self.rem[node.i]
 
+    # h_remaining plus the delay each open trip would already owe if dispatched now.
     def h_open(self, node: Node) -> float:
-        """h_remaining + delay of every open trip if it left right now. Adding
-        packages to a trip can only delay the ones already in it, so this is
-        still a lower bound (admissible)."""
         if node.done:
             return 0.0
         h = self.coef * self.rem[node.i]
@@ -165,28 +143,27 @@ class TruckLoadingProblem:
                 h += v
         return h
 
+    # Walk parents back to the root, collecting the trips each action dispatched.
     def plan_of(self, node: Node) -> List[Trip]:
         trips = []
         while node is not None:
             trips.extend(node.closed)
             node = node.parent
-        # order per truck: by first package (trips on one truck never interleave)
-        trips.sort(key=lambda t: t.ids[0])
+        trips.sort(key=lambda t: t.ids[0])  # order per truck: trips never interleave
         return trips
 
 
 HEURISTICS = {"h0": "h_zero", "h_rem": "h_remaining", "h_open": "h_open"}
 
 
+# Package a goal node (or None) into a SearchResult with the run's stats.
 def _result(name, prob, goal, expanded, generated, t0, status="ok"):
     plan = prob.plan_of(goal) if goal is not None else None
     return SearchResult(name, plan, goal.g if goal else INF, expanded, generated,
                         time.perf_counter() - t0, status)
 
 
-# --------------------------------------------------------------------------
-# Uninformed tree/graph searches (BFS, DFS)
-# --------------------------------------------------------------------------
+# Breadth-first search: expand level by level, first goal found is returned.
 def bfs(prob: TruckLoadingProblem, node_limit: int = 10**6) -> SearchResult:
     t0 = time.perf_counter()
     start = prob.initial()
@@ -208,6 +185,7 @@ def bfs(prob: TruckLoadingProblem, node_limit: int = 10**6) -> SearchResult:
     return _result("BFS", prob, None, expanded, generated, t0, "fail")
 
 
+# Depth-first search: dive down one branch, return the first complete plan found.
 def dfs(prob: TruckLoadingProblem, node_limit: int = 10**6) -> SearchResult:
     t0 = time.perf_counter()
     stack = [prob.initial()]
@@ -229,18 +207,14 @@ def dfs(prob: TruckLoadingProblem, node_limit: int = 10**6) -> SearchResult:
     return _result("DFS", prob, None, expanded, generated, t0, "fail")
 
 
-# --------------------------------------------------------------------------
-# Best-first family: UCS (= the g(n)-only priority-queue search taught as
-# "Best-First Search" on Aug 20), A*, and Greedy best-first (the top-1 case
-# of beam search, Sep 1).
-# --------------------------------------------------------------------------
+# Generic priority-queue search over g (UCS), g+h (A*), or h alone (Greedy best-first).
 def best_first(prob: TruckLoadingProblem, name: str, h: Callable[[Node], float],
                wg: float = 1.0, wh: float = 1.0, node_limit: int = 10**6) -> SearchResult:
     t0 = time.perf_counter()
     start = prob.initial()
     tie = itertools.count()
     frontier = [(wh * h(start), next(tie), start)]
-    best_g = {start.key: 0.0}
+    best_g = {start.key: 0.0}   # cheapest g seen so far for each state
     expanded = generated = 0
     while frontier:
         _, _, node = heapq.heappop(frontier)
@@ -259,21 +233,24 @@ def best_first(prob: TruckLoadingProblem, name: str, h: Callable[[Node], float],
     return _result(name, prob, None, expanded, generated, t0, "fail")
 
 
+# Uniform-cost search: best_first with h=0, so it's purely ordered by g.
 def ucs(prob, **kw):
     return best_first(prob, "UCS", prob.h_zero, **kw)
 
 
+# A* search: best_first with g+h, optimal as long as the heuristic is admissible.
 def astar(prob, heuristic="h_open", **kw):
     return best_first(prob, f"A*({heuristic})", getattr(prob, HEURISTICS[heuristic]), **kw)
 
 
+# Greedy best-first: best_first ignoring g entirely, so it can be led astray by cost.
 def greedy(prob, heuristic="h_open", **kw):
     return best_first(prob, "Greedy-BeFS", getattr(prob, HEURISTICS[heuristic]), wg=0.0, **kw)
 
 
+# Beam search: keep only the best `width` partial plans at each layer (every
+# action places exactly one package, so all nodes in a layer are comparable).
 def beam_search(prob, width=10, heuristic="h_open") -> SearchResult:
-    """Layered beam search: every action places exactly one package, so all
-    nodes in a layer are comparable. Keep the ``width`` best by g+h."""
     t0 = time.perf_counter()
     h = getattr(prob, HEURISTICS[heuristic])
     layer = [prob.initial()]

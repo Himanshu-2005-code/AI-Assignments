@@ -1,8 +1,5 @@
-"""Run every experiment of the report and write tables/plots to results/.
-
-    python run_experiments.py            # full run (a few minutes)
-    python run_experiments.py --quick    # fewer seeds, smaller sizes
-"""
+# Run every experiment of the report and write tables/plots to results/.
+# Usage: python run_experiments.py [--quick]
 from __future__ import annotations
 
 import argparse
@@ -19,6 +16,7 @@ OUT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "results")
 LIMIT = 200_000  # node limit for the exhaustive / tree searches
 
 
+# Build the dict of algorithm-name -> runner function used by one experiment.
 def algorithms(small: bool):
     algs = {
         "A*(h_open)": lambda P, I: astar(P, "h_open", node_limit=LIMIT),
@@ -42,6 +40,7 @@ ORDER = ["BFS", "DFS", "UCS", "A*(h_rem)", "A*(h_open)", "Greedy-BeFS", "Beam(k=
          "Beam(k=25)", "SA(20k)", "GA(pop=40,gen=200)"]
 
 
+# Run every algorithm once on one (n, seed) instance; returns one row per algorithm.
 def run_one(args):
     n, seed, small = args
     inst = generate(n, seed=seed)
@@ -56,17 +55,20 @@ def run_one(args):
     return rows
 
 
+# Render a list of rows as a markdown table with the given header.
 def md_table(header, rows):
     out = ["| " + " | ".join(header) + " |", "|" + "---|" * len(header)]
     out += ["| " + " | ".join(str(c) for c in r) + " |" for r in rows]
     return "\n".join(out)
 
 
+# Average a list, skipping any None entries (a failed/unsolved run).
 def mean(xs):
     xs = [x for x in xs if x is not None]
     return st.mean(xs) if xs else float("nan")
 
 
+# Experiment 1/2: every algorithm across sizes/seeds, scored against the best found.
 def exp_algorithms(pool, sizes, seeds, small, tag):
     rows = [r for rs in pool.map(run_one, [(n, s, small) for n in sizes for s in range(seeds)]) for r in rs]
     # reference = optimal (A* finished) else best found by anyone
@@ -104,6 +106,7 @@ def exp_algorithms(pool, sizes, seeds, small, tag):
     return "\n".join(lines), rows
 
 
+# One (n, seed) worker job for the heuristic-strength experiment.
 def _heur_job(args):
     n, seed = args
     inst = generate(n, seed=seed)
@@ -116,6 +119,7 @@ def _heur_job(args):
     return n, out
 
 
+# Experiment 3: nodes expanded by UCS/A*(h_rem)/A*(h_open), geometric mean per size.
 def exp_heuristics(pool, sizes, seeds):
     res = pool.map(_heur_job, [(n, s) for n in sizes for s in range(seeds)])
     names = ["UCS", "A*(h_rem)", "A*(h_open)"]
@@ -132,6 +136,7 @@ def exp_heuristics(pool, sizes, seeds):
     return md_table(["n"] + [f"{k} (geo-mean expanded)" for k in names], tab), sizes, series
 
 
+# One worker job for one model-variant (params/generator/GA setting) on one instance.
 def _variant_job(args):
     name, n, seed, kind, kw = args
     base = Params()
@@ -150,6 +155,7 @@ def _variant_job(args):
     return name, (e.cost, e.trucks, e.avg_delay, e.trips)
 
 
+# Experiment 4: rerun the solver with one changed parameter at a time.
 def exp_variants(pool, n, seeds):
     variants = [
         ("Base: offline optimum (A*)", "params", {}),
@@ -169,6 +175,7 @@ def exp_variants(pool, n, seeds):
     return md_table(["variant", "solved", "cost", "trucks", "avg delay", "trips"], tab)
 
 
+# One worker job for one w_truck value in the weight sweep.
 def _weight_job(args):
     w, n, seed = args
     inst = generate(n, seed=seed, params=replace(Params(), w_truck=w))
@@ -177,6 +184,7 @@ def _weight_job(args):
     return w, e.trucks, e.avg_delay
 
 
+# Experiment 5: sweep w_truck to trace the trucks-vs-delay trade-off curve.
 def exp_weights(pool, n, seeds, weights):
     res = pool.map(_weight_job, [(w, n, s) for w in weights for s in range(seeds)])
     tab, xs, ys = [], [], []
@@ -189,6 +197,7 @@ def exp_weights(pool, n, seeds, weights):
     return md_table(["w_truck (w_delay=1)", "trucks", "avg delay"], tab), weights, xs, ys
 
 
+# Draw the three report plots (heuristic nodes, weight trade-off, quality vs effort).
 def plots(heur, weights, alg_rows):
     try:
         import matplotlib
@@ -238,6 +247,7 @@ def plots(heur, weights, alg_rows):
     fig.savefig(os.path.join(OUT, "quality_vs_effort.png"), dpi=130)
 
 
+# Run all five experiments, write results/RESULTS.md and the plots.
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--quick", action="store_true")

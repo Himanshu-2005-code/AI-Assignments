@@ -1,13 +1,12 @@
-"""Solve one random instance with several algorithms and print the plans.
-
-    python demo.py --n 10 --seed 3
-"""
+# Solve one random instance with several algorithms and print the plans.
+# Usage: python demo.py --n 10 --seed 3
 import argparse
 
 from truckload import (Params, TruckLoadingProblem, astar, describe, generate, genetic_algorithm,
                        simulated_annealing, ucs)
 
 
+# Parse CLI args, generate one instance, run every algorithm, print each plan.
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--n", type=int, default=10)

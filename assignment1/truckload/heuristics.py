@@ -1,19 +1,4 @@
-"""Local search over complete plans: Simulated Annealing and the Genetic
-Algorithm, both taught in lecture (Sep 3 and Sep 10 respectively).
-
-These do not search the state space systematically; they are what you would
-run when n is too large for A*, and they give the reference points ("how
-much does search buy us?").
-
-Representation: truck[i] (truck id of package i) and brk[i] (package i
-starts a new trip on its truck). Packages of a truck, in arrival order, are
-cut into trips at brk flags and whenever a trip is full. This is exactly the
-space the tree search explores, so costs compare directly against A*/UCS -
-including the hard rule that a trip can't load a farther package behind a
-nearer one. An encoding that breaks that rule is simply invalid: _cost()
-scores it as +inf, so it is rejected the same way the tree search never
-offers that action in the first place.
-"""
+# Local search over complete plans: Simulated Annealing and the Genetic Algorithm.
 from __future__ import annotations
 
 import math
@@ -25,11 +10,13 @@ from .problem import Instance, Trip, evaluate
 from .search import SearchResult
 
 
+# Package a decoded plan into a SearchResult, scoring it with evaluate().
 def _res(name, inst, plan, evals, t0):
     r = evaluate(inst, plan)
     return SearchResult(name, plan, r.cost, evals, evals, time.perf_counter() - t0, "ok")
 
 
+# Turn a (truck, brk) encoding into a list of Trip objects.
 def decode(inst: Instance, truck: Sequence[int], brk: Sequence[int]) -> List[Trip]:
     cap = inst.params.capacity
     order = {}
@@ -48,6 +35,7 @@ def decode(inst: Instance, truck: Sequence[int], brk: Sequence[int]) -> List[Tri
     return [Trip(tid, tuple(ids)) for tid, ids in trips]
 
 
+# Turn a plan (list of Trip) back into its (truck, brk) encoding.
 def encode(inst: Instance, plan: Sequence[Trip]) -> Tuple[List[int], List[int]]:
     truck = [0] * inst.n
     brk = [0] * inst.n
@@ -58,19 +46,17 @@ def encode(inst: Instance, plan: Sequence[Trip]) -> Tuple[List[int], List[int]]:
     return truck, brk
 
 
+# Cost of a (truck, brk) encoding, or +inf if it decodes into an invalid trip
+# (violates the hard ordering rule) - rejected by the same accept/select logic
+# SA/GA already use, with no separate validity check needed.
 def _cost(inst, truck, brk):
-    """Cost of a (truck, brk) encoding, or +inf if it decodes into a trip that
-    loads a farther package behind a nearer one - that violates the hard
-    ordering rule, so it is simply not a reachable plan, the same way the
-    tree search never offers that APPEND action. Treating it as infinitely
-    bad lets simulated annealing and the genetic algorithm reject it through
-    their ordinary accept/select logic, with no separate validity check."""
     try:
         return evaluate(inst, decode(inst, truck, brk)).cost
     except ValueError:
         return float("inf")
 
 
+# Draw a random valid (truck, brk) encoding to seed a search.
 def _random_individual(inst, rng):
     for _ in range(20):
         k = rng.randint(1, max(1, inst.n // 2))
@@ -78,15 +64,12 @@ def _random_individual(inst, rng):
         brk = [int(rng.random() < 0.3) for _ in range(inst.n)]
         if _cost(inst, truck, brk) < float("inf"):
             return truck, brk
-    # Fallback, always valid: one truck per package, so no trip ever has two
-    # packages to be ordered at all.
+    # Fallback, always valid: one truck per package, so nothing needs ordering.
     return list(range(inst.n)), [1] * inst.n
 
 
-# --------------------------------------------------------------------------
-# Simulated Annealing (Sep 3): perturb one full candidate, accept a worse
-# move with probability exp(-delta/T), cool T over the run.
-# --------------------------------------------------------------------------
+# Simulated annealing: perturb one candidate plan, accept worse moves with
+# probability exp(-delta/T), and cool T over the run.
 def simulated_annealing(inst: Instance, iters: int = 20000, t_start: float = 2.0,
                         t_end: float = 0.01, seed: int = 0,
                         start: Optional[List[Trip]] = None) -> SearchResult:
@@ -98,7 +81,7 @@ def simulated_annealing(inst: Instance, iters: int = 20000, t_start: float = 2.0
         truck, brk = _random_individual(inst, rng)
     cur = _cost(inst, truck, brk)
     best = (cur, truck, brk)
-    alpha = (t_end / t_start) ** (1.0 / iters)
+    alpha = (t_end / t_start) ** (1.0 / iters)   # per-step cooling factor
     temp = t_start
     for _ in range(iters):
         used = sorted(set(truck))
@@ -123,13 +106,8 @@ def simulated_annealing(inst: Instance, iters: int = 20000, t_start: float = 2.0
     return _res(f"SA(it={iters})", inst, decode(inst, best[1], best[2]), iters + 1, t0)
 
 
-# --------------------------------------------------------------------------
-# Genetic Algorithm (Sep 10): population of N candidates, keep the best N/2,
-# sample pairs from the survivors, crossover to make N/2 children, new
-# population = survivors + children. Mutation nudges a child off its
-# parents' exact encoding, same as the course's forward-pointer to
-# "Evolutionary (Genetic) Search" variants.
-# --------------------------------------------------------------------------
+# Genetic algorithm: keep the best half of the population each generation,
+# breed the rest by crossover + mutation of the (truck, brk) encoding.
 def genetic_algorithm(inst: Instance, pop_size: int = 40, generations: int = 200,
                       mutation_rate: float = 0.1, seed: int = 0,
                       start: Optional[List[Trip]] = None) -> SearchResult:
